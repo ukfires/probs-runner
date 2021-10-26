@@ -2,7 +2,23 @@
 collecting results.
 
 This aims to hide the complexity of setting up RDFox, loading data, adding
-rules, answering queries, behind a simple function that maps data -> answers.
+rules, answering queries, behind simple functions that map data -> answers.
+
+The pipeline has multiple steps:
+- The starting point are datasources (csv/loading rules)
+- *Conversion* maps datasources to probs_original_data.nt.gz
+- *Enhancement* maps probs_original_data.nt.gz to probs_enhanced_data.nt.gz
+- We then start a *reasoning* endpoint to query the data
+
+These correspond to the "basic" functions:
+probs_convert_data(datasources) -> probs_original_data
+probs_enhance_data(probs_original_data) -> probs_enhanced_data
+probs_endpoint(probs_enhanced_data) -> endpoint
+
+All of these functions accept some common options:
+- working_dir
+- script_source_dir
+
 """
 
 
@@ -10,8 +26,18 @@ from contextlib import contextmanager
 import logging
 from typing import Dict, ContextManager, Iterator
 from io import StringIO
-import importlib_resources
 import shutil
+from pathlib import Path
+from tempfile import mkdtemp
+
+try:
+    import importlib.resources
+    DEFAULT_SCRIPT_SOURCE_DIR = importlib.resources.files("probs_ontology")
+except (ImportError, AttributeError):
+    # Try backported to PY<37 `importlib_resources`.
+    import importlib_resources
+    DEFAULT_SCRIPT_SOURCE_DIR = importlib_resources.files("probs_ontology")
+
 import pandas as pd
 from rdflib import Namespace
 from rdflib.namespace import RDF, RDFS
@@ -32,8 +58,44 @@ NAMESPACES = {
 }
 
 
-def probs_convert_data(datasources, output_path, working_dir=None, script_source_dir=None) -> None:
-    """Run RDFox to load `facts` and `rules` then return answer from `queries`.
+DEFAULT_PORT = 12112
+
+def _standard_input_files(script_source_dir):
+    if script_source_dir is None:
+        # Use the version of the ontology scripts bundled with the Python
+        # package
+        script_source_dir = DEFAULT_SCRIPT_SOURCE_DIR
+
+    # Standard files
+    input_files = {
+        "data/probs.fss": script_source_dir / "data/probs.fss",
+        "data/additional_info.ttl": script_source_dir / "data/additional_info.ttl",
+        "scripts/": script_source_dir / "scripts/",
+        # "scripts/shared": script_source_dir / "scripts/shared",
+        # "scripts/data-conversion": script_source_dir / "scripts/data-conversion",
+    }
+
+    return input_files
+
+
+def _add_datasources_to_input_files(input_files, datasources):
+    input_files["scripts/data-conversion/load_data.rdfox"] = StringIO(
+        "\n".join(source.load_data_script for source in datasources)
+    )
+    input_files["scripts/data-conversion/map.dlog"] = StringIO(
+        "\n".join(source.rules for source in datasources)
+    )
+    for datasource in datasources:
+        for tgt, src in datasource.input_files.items():
+            if tgt in input_files:
+                raise ValueError(f"Duplicate entry in input_files for '{tgt}'")
+            input_files[tgt] = src
+
+
+def probs_convert_data(
+    datasources, output_path, working_dir=None, script_source_dir=None
+) -> None:
+    """Load `datasources`, convert to RDF and copy result to `output_path`.
 
     :param datasources: list of Datasource
     :param output_path: path to save the data
@@ -41,181 +103,67 @@ def probs_convert_data(datasources, output_path, working_dir=None, script_source
     :param script_source_dir: Path to copy scripts from
     """
 
-    # Standard files
-    FILES = [
-        "probs.fss",
-        "additional_info.ttl",
-        "scripts/conversion/init.rdfox",
-        "scripts/conversion/rules.dlog",
-        "scripts/conversion/object_composition",
-        "scripts/conversion/save_data.rdfox",
-    ]
-
-    if script_source_dir is None:
-        # Use the version of the ontology scripts bundled with the Python
-        # package
-        script_source_dir = importlib_resources.files("probs_ontology")
-
-    input_files = {
-        path: script_source_dir / path
-        for path in FILES
-    }
-
-    # Datasources -- the actual info
-    input_files["scripts/conversion/load_data.rdfox"] = StringIO(
-        "\n".join(source.load_data_script for source in datasources)
-    )
-    input_files["scripts/conversion/map.dlog"] = StringIO(
-        "\n".join(source.rules for source in datasources)
-    )
-    for datasource in datasources:
-        for tgt, src in datasource.input_files.items():
-            if tgt in input_files:
-                raise ValueError(f"Duplicate entry in input_files for '{tgt}'")
-            input_files[tgt] = src
-
-    # Placeholder for data
-    input_files["data/.placeholder"] = StringIO("")
-
-    script = [
-        # Not reusing conversion/master because it ends with quit
-        'exec scripts/conversion/init',
-
-        # Actual data
-        'exec load_data',
-        'import map.dlog',
-
-        # Rest of conversion step
-        'import rules.dlog',
-        'exec object_composition/pcsc_algorithm',
-        'exec save_data',  # includes some drop/clear steps that are needed?
-        'quit',
-    ]
+    input_files = _standard_input_files(script_source_dir)
+    _add_datasources_to_input_files(input_files, datasources)
+    script = ["exec scripts/data-conversion/master"]
 
     with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
-        shutil.copy(rdfox.files("data/probs_data.nt.gz"), output_path)
+        shutil.copy(rdfox.files("data/probs_original_data.nt.gz"), output_path)
+
+    # Should somehow signal success or failure
 
 
-def probs_query_data(
-    facts_path, queries, working_dir=None, script_source_dir=None
-) -> Dict:
-    """Run RDFox to query pre-prepared facts.
+def probs_enhance_data(
+    original_data_path, output_path, working_dir=None, script_source_dir=None
+) -> None:
+    """Load `original_data_path`, apply rules to enhance, and copy result to `output_path`.
 
-    :param facts_path: Path to where facts have been written (in ".nt.gz" format)
-    :param queries: Dict of {query_name: query_text}, or list of [query_text].
+    :param original_data_path: path to probs_original_data.nt.gz
+    :param output_path: path to save the data
     :param working_dir: Path to setup rdfox in, defaults to a temporary directory
     :param script_source_dir: Path to copy scripts from
-    :return: Dict of {query_name: result}
     """
-    if isinstance(queries, list):
-        queries = {i: query_text for i, query_text in enumerate(queries)}
-    elif not isinstance(queries, dict):
-        raise ValueError("query should be list or dict")
 
-    # Standard files
-    FILES = [
-        "probs.fss",
-        "additional_info.ttl",
-        "scripts/reasoning/master.rdfox",
-        "scripts/reasoning/init.rdfox",
-        "scripts/reasoning/load_data.rdfox",
-        "scripts/reasoning/rules.dlog",
-    ]
-
-    if script_source_dir is None:
-        # Use the version of the ontology scripts bundled with the Python
-        # package
-        script_source_dir = importlib_resources.files("probs_ontology")
-
-    input_files = {
-        path: script_source_dir / path
-        for path in FILES
-    }
-
-    # Add in the actual data
-    input_files["data/probs_data.nt.gz"] = facts_path
-
-    script = [
-        'dstore create default par-complex-nn',
-        'exec scripts/reasoning/init',
-        'exec load_data',
-        'import rules.dlog',
-        'set endpoint.port "12112"',
-        'endpoint start',
-    ]
+    input_files = _standard_input_files(script_source_dir)
+    input_files["data/probs_original_data.nt.gz"] = original_data_path
+    script = ["exec scripts/data-enhancement/master"]
 
     with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
-        answers_df = {
-            query_name: rdfox.query_records(query_text)
-            for query_name, query_text in queries.items()
-        }
+        shutil.copy(rdfox.files("data/probs_enhanced_data.nt.gz"), output_path)
 
-    with pd.option_context('display.max_rows', 100, 'display.max_columns', 10, 'display.max_colwidth', 200):
-        for k, v in answers_df.items():
-            logger.info("Results from query %s:", k)
-            logger.info("\n%s", pd.DataFrame.from_records(v))
-
-    return answers_df
+    # Should somehow signal success or failure
 
 
 @contextmanager
-def probs_endpoint(
-    facts_path, working_dir=None, script_source_dir=None
-) -> Iterator:
-    """Run RDFox to query pre-prepared facts.
+def probs_endpoint(enhanced_data_path, working_dir=None, script_source_dir=None, port=DEFAULT_PORT) -> Iterator:
+    """Load `enhanced_data_path`, and start endpoint.
 
-    :param facts_path: Path to where facts have been written (in ".nt.gz" format)
+    :param enhanced_data_path: path to probs_original_data.nt.gz
     :param working_dir: Path to setup rdfox in, defaults to a temporary directory
     :param script_source_dir: Path to copy scripts from
-    :return: Dict of {query_name: result}
+    :param port: Port number to listen on
     """
-    # Standard files
-    FILES = [
-        "probs.fss",
-        "additional_info.ttl",
-        "scripts/reasoning/master.rdfox",
-        "scripts/reasoning/init.rdfox",
-        "scripts/reasoning/load_data.rdfox",
-        "scripts/reasoning/rules.dlog",
-    ]
 
-    if script_source_dir is None:
-        # Use the version of the ontology scripts bundled with the Python
-        # package
-        script_source_dir = importlib_resources.files("probs_ontology")
+    if port is None:
+        port = DEFAULT_PORT
 
-    input_files = {
-        path: script_source_dir / path
-        for path in FILES
-    }
-
-    # Add in the actual data
-    input_files["data/probs_data.nt.gz"] = facts_path
+    input_files = _standard_input_files(script_source_dir)
+    input_files["data/probs_enhanced_data.nt.gz"] = enhanced_data_path
 
     script = [
-        'dstore create default par-complex-nn',
-        'exec scripts/reasoning/init',
-        'exec load_data',
-        'import rules.dlog',
-        'set endpoint.port "12112"',
-        'endpoint start',
+        f'set endpoint.port "{int(port)}"',
+        "exec scripts/reasoning/master",
     ]
 
-    with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
+    with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir, wait="endpoint") as rdfox:
         yield rdfox
 
 
-def probs_convert_and_query_data(
-    datasources, queries, print_facts=False, working_dir=None, script_source_dir=None
-) -> Dict:
-    """Run RDFox to load `facts` and `rules` then return answer from `queries`.
+def answer_queries(rdfox, queries) -> Dict:
+    """Answer queries from RDFox endpoint.
 
-    :param facts: Facts in ttl format (string)
-    :param rules: Facts in datalog format (string)
+    :param rdfox: RDFox endpoint
     :param queries: Dict of {query_name: query_text}, or list of [query_text].
-    :param print_facts: whether to dump all RDFox facts for debugging
-    :param working_dir: Path to setup rdfox in, defaults to a temporary directory
-    :param script_source_dir: Path to copy scripts from
     :return: Dict of {query_name: result}
     """
     if isinstance(queries, list):
@@ -223,111 +171,17 @@ def probs_convert_and_query_data(
     elif not isinstance(queries, dict):
         raise ValueError("query should be list or dict")
 
-    # Standard files
-    FILES = [
-        "probs.fss",
-        "additional_info.ttl",
-        "scripts/conversion/init.rdfox",
-        "scripts/conversion/rules.dlog",
-        "scripts/conversion/object_composition",
-        "scripts/conversion/save_data.rdfox",
-        "scripts/reasoning/init.rdfox",
-        # "scripts/reasoning/load_data.rdfox",
-        "scripts/reasoning/rules.dlog",
-    ]
-
-    if script_source_dir is None:
-        # Use the version of the ontology scripts bundled with the Python
-        # package
-        script_source_dir = importlib_resources.files("probs_ontology")
-
-    input_files = {
-        path: script_source_dir / path
-        for path in FILES
+    answers_df = {
+        query_name: rdfox.query_records(query_text)
+        for query_name, query_text in queries.items()
     }
 
-    # Datasources -- the actual info
-    input_files["scripts/conversion/load_data.rdfox"] = StringIO(
-        "\n".join(source.load_data_script for source in datasources)
-    )
-    input_files["scripts/conversion/map.dlog"] = StringIO(
-        "\n".join(source.rules for source in datasources)
-    )
-    for datasource in datasources:
-        for tgt, src in datasource.input_files.items():
-            if tgt in input_files:
-                raise ValueError(f"Duplicate entry in input_files for '{tgt}'")
-            input_files[tgt] = src
-
-    # Placeholder for data
-    input_files["data/.placeholder"] = StringIO("")
-
-    script = [
-        # Not reusing conversion/master because it ends with quit
-        'exec scripts/conversion/init',
-
-        # Actual data
-        'exec load_data',
-        'import map.dlog',
-
-        # Rest of conversion step
-        'import rules.dlog',
-        'exec object_composition/pcsc_algorithm',
-        'exec save_data',  # includes some drop/clear steps that are needed?
-
-        # Reasoning step
-        'exec scripts/reasoning/init',
-        'import rules.dlog',
-
-        # Start the endpoint
-        'set endpoint.port "12112"',
-        'endpoint start',
-    ]
-
-    with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
-        if print_facts:
-            print()
-            print("--- Dump of RDFox data: ---")
-            print(rdfox.facts())
-
-        answers_df = {
-            query_name: rdfox.query_records(query_text)
-            for query_name, query_text in queries.items()
-        }
-
-    with pd.option_context('display.max_rows', 100, 'display.max_columns', 10, 'display.max_colwidth', 200):
+    with pd.option_context(
+        "display.max_rows", 100, "display.max_columns", 10, "display.max_colwidth", 200
+    ):
         for k, v in answers_df.items():
             logger.info("Results from query %s:", k)
             logger.info("\n%s", pd.DataFrame.from_records(v))
 
     return answers_df
 
-
-class ProbsFacts:
-    def __init__(self, sources, print_facts=False, working_dir=None, script_source_dir=None):
-        if isinstance(sources, str):
-            sources = [Datasource.from_facts(sources)]
-
-        self.sources = sources
-        self.print_facts = print_facts
-        self.working_dir = working_dir
-        self.script_source_dir = script_source_dir
-
-    def query(self, query):
-        if isinstance(query, str):
-            query = [query]
-            unwrap = True
-        else:
-            unwrap = False
-
-        result = probs_convert_and_query_data(
-            self.sources, query, self.print_facts, self.working_dir, self.script_source_dir
-        )
-
-        return result[0] if unwrap else result
-
-    def query_one(self, query):
-        result = self.query(query)
-        if len(result) != 1:
-            raise ValueError(f"Expected only 1 result but got {len(result)}")
-        return result[0]

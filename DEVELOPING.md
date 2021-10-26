@@ -51,3 +51,11 @@ pytest
 ```
 
 See [tests/README.md](tests/README.md) for more details of how to use the test runner.
+
+### Choosing the ontology scripts to use
+
+The environment variable `PROBS_SCRIPT_SOURCE_DIR` can be set to specify the script source directory. For example:
+
+```shell
+PROBS_SCRIPT_SOURCE_DIR=/path/to/ontology/scripts pytest
+```

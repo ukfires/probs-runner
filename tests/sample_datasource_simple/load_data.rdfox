@@ -1,9 +1,10 @@
 prefix ufrd: <https://ukfires.org/probs/ontology/raw_data/>
 prefix simple: <https://ukfires.org/probs/ontology/data/simple/>
 
-dsource register delimitedFile "Simple"                          \
+dsource register "Simple"                                           \
+    type    delimitedFile                                           \
     file    "$(dir.root)/data/sample_datasource_simple/data.csv"    \
-    header  true                                                \
+    header  true                                                    \
     quote   '"'
 
 tupletable create ufrd:simple                                   \
