@@ -1,12 +1,13 @@
 from .runners import (
-    ProbsFacts,
+    #ProbsFacts,
     probs_convert_data,
-    probs_query_data,
+    probs_convert_endpoint,
+    probs_convert_enhance_data,
+    probs_convert_enhance_endpoint,
+    probs_enhance_data,
+    probs_enhance_endpoint,
     probs_endpoint,
-    probs_convert_and_query_data,
+    answer_queries,
 )
 from .datasource import Datasource, load_datasource
 from .namespace import PROBS
-
-# Old name
-answer_queries_with_rdfox = probs_convert_and_query_data
