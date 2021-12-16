@@ -31,10 +31,12 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 try:
-    import importlib.resources as importlib_resources
+    import importlib.resources
+    importlib_resources_files = importlib.resources.files
 except (ImportError, AttributeError):
     # Try backported to PY<37 `importlib_resources`.
     import importlib_resources
+    importlib_resources_files = importlib_resources.files
 
 import pandas as pd
 from rdflib import Namespace
@@ -63,9 +65,11 @@ def _standard_input_files(script_source_dir):
         # Use the version of the ontology scripts bundled with the Python
         # package
         try:
-            script_source_dir = importlib_resources.files("probs_ontology")
+            script_source_dir = importlib_resources_files("probs_ontology")
         except ModuleNotFoundError:
-            raise RuntimeError("The probs_ontology package is not installed, and no script_source_dir has been specified.")
+            raise RuntimeError(
+                "The probs_ontology package is not installed, and no script_source_dir has been specified."
+            )
 
     # Standard files
     input_files = {
