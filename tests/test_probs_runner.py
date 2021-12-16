@@ -59,6 +59,42 @@ def test_enhance_data(tmp_path, script_source_dir):
     assert len(lines) > 1
 
 
+def test_enhance_data_multiple_inputs(tmp_path, script_source_dir):
+    original_filename_1 = tmp_path / "original1.nt.gz"
+    original_filename_2 = tmp_path / "original2.ttl"
+    enhanced_filename = tmp_path / "enhanced.nt.gz"
+
+    with gzip.open(original_filename_1, "wt") as f:
+        f.write(
+            """
+<https://ukfires.org/probs/ontology/data/simple/Object-Bread> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://ukfires.org/probs/ontology/Object> .
+"""
+        )
+
+    with open(original_filename_2, "wt") as f:
+        f.write(
+            """
+@prefix simple: <https://ukfires.org/probs/ontology/data/simple/> .
+@prefix probs: <https://ukfires.org/probs/ontology/> .
+simple:Object-Cheese a probs:Object .
+"""
+        )
+
+    probs_enhance_data(
+        [original_filename_1, original_filename_2],
+        enhanced_filename,
+        tmp_path / "working_enhanced",
+        script_source_dir,
+    )
+
+    with gzip.open(enhanced_filename, "rt") as f:
+        result = f.read()
+
+    # Check something has been added...
+    assert "Object-Bread>" in result
+    assert "Object-Cheese>" in result
+
+
 def test_probs_endpoint(tmp_path, script_source_dir):
     output_filename = tmp_path / "output.nt.gz"
     with gzip.open(output_filename, "wt") as f:

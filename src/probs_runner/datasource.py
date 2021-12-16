@@ -44,7 +44,7 @@ def load_datasource(path: Path):
     else:
         rules = ""
 
-    data_files = path.glob("*.csv")
+    data_files = list(path.glob("*.csv")) + list(path.glob("*.ttl"))
     datasource_name = path.stem
     input_files = {
         f"data/{datasource_name}/{filename.relative_to(path)}": filename

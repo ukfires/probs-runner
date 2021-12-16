@@ -53,8 +53,11 @@ logger = logging.getLogger(__name__)
 NAMESPACES = {
     "sys": Namespace("https://ukfires.org/probs/system/"),
     "": PROBS,
+    "probs": PROBS,
     "rdf": RDF,
     "rdfs": RDFS,
+    "prov": Namespace("http://www.w3.org/ns/prov#"),
+    "quantitykind": Namespace("http://qudt.org/2.1/vocab/quantitykind#"),
 }
 
 
@@ -117,20 +120,40 @@ def probs_convert_data(
 
     # Should somehow signal success or failure
 
+# XXX This is a temporary hack -- the scripts should be updated to allow an easy customisation point
+STANDARD_ENHANCEMENT_INPUT = """
+# Import converted ontology and additional info
+import probs.fss
+import additional_info.ttl
+
+# Load converted data
+"""
 
 def probs_enhance_data(
     original_data_path, output_path, working_dir=None, script_source_dir=None
 ) -> None:
     """Load `original_data_path`, apply rules to enhance, and copy result to `output_path`.
 
-    :param original_data_path: path to probs_original_data.nt.gz
+    :param original_data_path: path to probs_original_data.nt.gz, or multiple paths to load
     :param output_path: path to save the data
     :param working_dir: Path to setup rdfox in, defaults to a temporary directory
     :param script_source_dir: Path to copy scripts from
     """
 
     input_files = _standard_input_files(script_source_dir)
-    input_files["data/probs_original_data.nt.gz"] = original_data_path
+
+    if isinstance(original_data_path, (list, tuple)):
+        paths_to_load = []
+        for path in (Path(x) for x in original_data_path):
+            input_files["data/" + path.name] = path
+            paths_to_load.append(path.name)
+        input_files["scripts/data-enhancement/input.rdfox"] = StringIO(
+            STANDARD_ENHANCEMENT_INPUT +
+            "\n".join(f"import {name}" for name in paths_to_load)
+        )
+    else:
+        input_files["data/probs_original_data.nt.gz"] = original_data_path
+
     script = ["exec scripts/data-enhancement/master"]
 
     with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
