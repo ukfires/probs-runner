@@ -63,6 +63,7 @@ NAMESPACES = {
 
 DEFAULT_PORT = 12112
 
+
 def _standard_input_files(script_source_dir):
     if script_source_dir is None:
         # Use the version of the ontology scripts bundled with the Python
@@ -101,7 +102,10 @@ def _add_datasources_to_input_files(input_files, datasources):
 
 
 def probs_convert_data(
-    datasources, output_path, working_dir=None, script_source_dir=None
+    datasources,
+    output_path,
+    working_dir=None,
+    script_source_dir=None,
 ) -> None:
     """Load `datasources`, convert to RDF and copy result to `output_path`.
 
@@ -116,7 +120,9 @@ def probs_convert_data(
     script = ["exec scripts/data-conversion/master"]
 
     with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
+        logger.debug("probs_convert_data: RDFox runner done")
         shutil.copy(rdfox.files("data/probs_original_data.nt.gz"), output_path)
+        logger.debug("probs_convert_data: Copy data done")
 
     # Should somehow signal success or failure
 
@@ -130,7 +136,10 @@ import additional_info.ttl
 """
 
 def probs_enhance_data(
-    original_data_path, output_path, working_dir=None, script_source_dir=None
+    original_data_path,
+    output_path,
+    working_dir=None,
+    script_source_dir=None,
 ) -> None:
     """Load `original_data_path`, apply rules to enhance, and copy result to `output_path`.
 
@@ -157,23 +166,38 @@ def probs_enhance_data(
     script = ["exec scripts/data-enhancement/master"]
 
     with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
+        logger.debug("probs_enhance_data: RDFox runner done")
         shutil.copy(rdfox.files("data/probs_enhanced_data.nt.gz"), output_path)
+        logger.debug("probs_enhance_data: Copy data done")
 
     # Should somehow signal success or failure
 
 
 @contextmanager
-def probs_endpoint(enhanced_data_path, working_dir=None, script_source_dir=None, port=DEFAULT_PORT) -> Iterator:
+def probs_endpoint(
+    enhanced_data_path,
+    working_dir=None,
+    script_source_dir=None,
+    port=DEFAULT_PORT,
+    namespaces=None,
+    use_default_namespaces=True,
+) -> Iterator:
     """Load `enhanced_data_path`, and start endpoint.
 
     :param enhanced_data_path: path to probs_original_data.nt.gz
     :param working_dir: Path to setup rdfox in, defaults to a temporary directory
     :param script_source_dir: Path to copy scripts from
     :param port: Port number to listen on
+    :param namespaces: dict of namespace mappings
+    :param use_default_namespaces: whether to use the default namespaces.
     """
 
     if port is None:
         port = DEFAULT_PORT
+
+    ns = NAMESPACES.copy() if use_default_namespaces else {}
+    if namespaces is not None:
+        ns.update(namespaces)
 
     input_files = _standard_input_files(script_source_dir)
     input_files["data/probs_enhanced_data.nt.gz"] = enhanced_data_path
@@ -183,7 +207,9 @@ def probs_endpoint(enhanced_data_path, working_dir=None, script_source_dir=None,
         "exec scripts/reasoning/master",
     ]
 
-    with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir, wait="endpoint") as rdfox:
+    with RDFoxRunner(
+        input_files, script, ns, working_dir=working_dir, wait="endpoint"
+    ) as rdfox:
         yield rdfox
 
 
@@ -212,4 +238,3 @@ def answer_queries(rdfox, queries) -> Dict:
             logger.info("\n%s", pd.DataFrame.from_records(v))
 
     return answers_df
-
