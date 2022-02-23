@@ -57,7 +57,7 @@ NAMESPACES = {
     "rdf": RDF,
     "rdfs": RDFS,
     "prov": Namespace("http://www.w3.org/ns/prov#"),
-    "quantitykind": Namespace("http://qudt.org/2.1/vocab/quantitykind#"),
+    "quantitykind": Namespace("http://qudt.org/vocab/quantitykind/"),
 }
 
 
