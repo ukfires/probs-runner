@@ -75,6 +75,9 @@ def _standard_input_files(script_source_dir):
                 "The probs_ontology package is not installed, and no script_source_dir has been specified."
             )
 
+    if not isinstance(script_source_dir, Path):
+        script_source_dir = Path(script_source_dir)
+
     # Standard files
     input_files = {
         "data/probs.fss": script_source_dir / "data/probs.fss",
@@ -200,7 +203,17 @@ def probs_endpoint(
         ns.update(namespaces)
 
     input_files = _standard_input_files(script_source_dir)
-    input_files["data/probs_enhanced_data.nt.gz"] = enhanced_data_path
+
+    if isinstance(enhanced_data_path, (list, tuple)):
+        paths_to_load = []
+        for path in (Path(x) for x in enhanced_data_path):
+            input_files["data/" + path.name] = path
+            paths_to_load.append(path.name)
+        input_files["scripts/reasoning/input.rdfox"] = StringIO(
+            "\n".join(f"import {name}" for name in paths_to_load)
+        )
+    else:
+        input_files["data/probs_enhanced_data.nt.gz"] = enhanced_data_path
 
     script = [
         f'set endpoint.port "{int(port)}"',
