@@ -42,7 +42,7 @@ import pandas as pd
 from rdflib import Namespace
 from rdflib.namespace import RDF, RDFS
 
-from rdfox_runner import RDFoxRunner
+from rdfox_runner import RDFoxRunner, RDFoxEndpoint
 
 from .datasource import Datasource
 from .namespace import PROBS
@@ -224,6 +224,22 @@ def probs_endpoint(
         input_files, script, ns, working_dir=working_dir, wait="endpoint"
     ) as rdfox:
         yield rdfox
+
+
+def connect_to_endpoint(
+        url,
+        namespaces=None,
+        use_default_namespaces=True,
+):
+    """Connect to an existing endpoint."""
+
+    ns = NAMESPACES.copy() if use_default_namespaces else {}
+    if namespaces is not None:
+        ns.update(namespaces)
+
+    endpoint = RDFoxEndpoint(ns)
+    endpoint.connect(url)
+    return endpoint
 
 
 def answer_queries(rdfox, queries) -> Dict:

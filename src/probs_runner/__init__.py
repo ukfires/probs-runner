@@ -3,6 +3,7 @@ from .runners import (
     probs_enhance_data,
     probs_endpoint,
     answer_queries,
+    connect_to_endpoint,
 )
 from .datasource import Datasource, load_datasource
 from .namespace import PROBS
