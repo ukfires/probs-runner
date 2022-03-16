@@ -129,6 +129,42 @@ def probs_convert_data(
 
     # Should somehow signal success or failure
 
+
+def probs_validate_data(
+    original_data_path,
+    working_dir=None,
+    script_source_dir=None,
+) -> None:
+    """Load `original_data_path`, run data validation script.
+
+    :param original_data_path: path to probs_original_data.nt.gz, or multiple paths to load
+    :param working_dir: Path to setup rdfox in, defaults to a temporary directory
+    :param script_source_dir: Path to copy scripts from
+    """
+
+    input_files = _standard_input_files(script_source_dir)
+
+    if isinstance(original_data_path, (list, tuple)):
+        paths_to_load = []
+        for path in (Path(x) for x in original_data_path):
+            input_files["data/" + path.name] = path
+            paths_to_load.append(path.name)
+        input_files["scripts/data-enhancement/input.rdfox"] = StringIO(
+            STANDARD_ENHANCEMENT_INPUT +
+            "\n".join(f"import {name}" for name in paths_to_load)
+        )
+    else:
+        input_files["data/probs_original_data.nt.gz"] = original_data_path
+
+    script = ["exec scripts/data-validation/master"]
+
+    with RDFoxRunner(input_files, script, NAMESPACES, working_dir=working_dir) as rdfox:
+        logger.debug("probs_validate_data: RDFox runner done")
+        # shutil.copy(rdfox.files("data/probs_enhanced_data.nt.gz"), output_path)
+        # logger.debug("probs_validate_data: Copy data done")
+
+    # Should somehow signal success or failure
+
 # XXX This is a temporary hack -- the scripts should be updated to allow an easy customisation point
 STANDARD_ENHANCEMENT_INPUT = """
 # Import converted ontology and additional info
