@@ -127,13 +127,6 @@ def _default_query():
 @cli.command()
 @click.argument("inputs", nargs=-1, type=click.Path(exists=True, path_type=pathlib.Path))
 @click.option(
-    "-s",
-    "--scripts",
-    help="PRObs ontology folder",
-    type=click.Path(file_okay=False, exists=True, readable=True,
-                    path_type=pathlib.Path),
-)
-@click.option(
     "-p",
     "--port",
     help="RDFox endpoint port",
@@ -152,7 +145,8 @@ def _default_query():
     help="Whether to launch endpoint console",
     default=True,
 )
-def endpoint(inputs, scripts, port, query_files, console):
+@click.pass_obj
+def endpoint(obj, inputs, port, query_files, console):
     "Start an RDFox endpoint based on DATA_PATH"
     click.echo("Starting endpoint...", err=True)
 
@@ -161,9 +155,11 @@ def endpoint(inputs, scripts, port, query_files, console):
         queries = [_default_query()]
     query = urllib.parse.quote("\n".join(queries))
 
+    script_source_dir = obj["script_source_dir"]
+
     with probs_endpoint(inputs,
                         port=port,
-                        script_source_dir=scripts) as rdfox:
+                        script_source_dir=script_source_dir) as rdfox:
 
         url = f"{rdfox.server}/console/default?query={query}"
         click.echo("Started endpoint", err=True)
