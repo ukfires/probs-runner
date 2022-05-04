@@ -29,6 +29,7 @@ from io import StringIO
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
+from hashlib import md5
 
 try:
     import importlib.resources
@@ -193,8 +194,11 @@ def probs_enhance_data(
     if isinstance(original_data_path, (list, tuple)):
         paths_to_load = []
         for path in (Path(x) for x in original_data_path):
-            input_files["data/" + path.name] = path
-            paths_to_load.append(path.name)
+            # Keep path.name in the filename, so it's easier to understand, but
+            # make sure it is unique using the full path hash.
+            unique_filename = md5(bytes(path)).hexdigest() + "_" + path.name
+            input_files["data/" + unique_filename] = path
+            paths_to_load.append(unique_filename)
         input_files["scripts/data-enhancement/input.rdfox"] = StringIO(
             STANDARD_ENHANCEMENT_INPUT +
             "\n".join(f"import {name}" for name in paths_to_load)
