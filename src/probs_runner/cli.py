@@ -5,7 +5,10 @@ import urllib.parse
 import pathlib
 import logging
 import click
+from rdflib import URIRef
+from rdflib.namespace import RDF, RDFS
 
+from .namespace import PROBS
 from .runners import NAMESPACES, probs_convert_data, probs_validate_data, probs_enhance_data, probs_endpoint
 from .datasource import load_datasource
 
@@ -171,3 +174,105 @@ def endpoint(obj, inputs, port, query_files, console):
                 time.sleep(1)
         except KeyboardInterrupt:
             click.echo("Stopping endpoint")
+
+
+INSPECT_QUERY = """
+SELECT ?p ?o
+WHERE {
+    ?s ?p ?o .
+}
+ORDER BY ?p ?o
+"""
+
+INSPECT_OBSERVATIONS_COUNT = """
+SELECT (COUNT(DISTINCT ?Observation) AS ?count) (SUM(COALESCE(?DirectCounter, 0)) AS ?direct)
+WHERE {
+  ?Observation a :Observation .
+  OPTIONAL { ?Observation a :DirectObservation. BIND(1 AS ?DirectCounter) }
+}
+"""
+
+
+INSPECT_OBSERVATIONS_SUMMARY = """
+SELECT ?p (COUNT(DISTINCT ?o) AS ?count) (GROUP_CONCAT(DISTINCT STR(?o)) AS ?values)
+WHERE {
+  ?Observation a :Observation; ?p ?o .
+  FILTER(?p IN (:processDefinedBy, :objectDefinedBy, :hasRegion, :hasTimePeriod, :hasRole, :metric))
+}
+GROUP BY ?p
+ORDER BY ?p
+"""
+
+
+def _inspect(rdfox, subject):
+    result = rdfox.query_records(INSPECT_QUERY,
+                                n3=True,
+                                initBindings={"s": URIRef(subject)})
+
+    if not result:
+        print("** Nothing found!")
+        return
+
+    values = {}
+    for x in result:
+        values.setdefault(x["p"], set())
+        values[x["p"]] |= {x["o"]}
+
+    # if PROBS.Observation in values[RDF.type]:
+    #     print("OBSERVATION")
+    for p, vals in values.items():
+        print(p)
+        for v in vals:
+            print("  ", v)
+        print()
+
+
+@cli.command()
+@click.argument("inputs", nargs=-1, type=click.Path(exists=True, path_type=pathlib.Path))
+@click.option(
+    "-s",
+    "--subject",
+    multiple=True,
+)
+@click.option(
+    "--summary",
+    help="Print a summary of observations found in the data.",
+    is_flag=True,
+)
+# @click.option(
+#     "-l",
+#     "--load",
+#     type=click.Path(exists=True, path_type=pathlib.Path),
+#     multiple=True,
+# )
+@click.pass_obj
+def inspect(obj, inputs, subject, summary):
+    "Load facts and inspect a PRObs subject."
+    click.echo("Loading data...", err=True)
+
+    script_source_dir = obj["script_source_dir"]
+
+    with probs_endpoint(inputs,
+                        port=12130,
+                        script_source_dir=script_source_dir) as rdfox:
+
+        if summary:
+            print()
+            result = rdfox.query_records(INSPECT_OBSERVATIONS_COUNT)
+            for row in result:
+                print("{count:3d} Observations, of which {direct:3d} are Direct.".format(**row))
+            print()
+            result = rdfox.query_records(INSPECT_OBSERVATIONS_SUMMARY, n3=True)
+            for row in result:
+                print("{p:40s} {count:3d}".format(**row))
+
+        elif subject:
+            for s in subject:
+                _inspect(rdfox, s)
+
+        else:
+            while True:
+                subject = input("Subject> ")
+                if not subject:
+                    break
+                _inspect(rdfox, subject)
