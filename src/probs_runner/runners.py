@@ -150,7 +150,7 @@ def probs_validate_data(
         for path in (Path(x) for x in original_data_path):
             input_files["data/" + path.name] = path
             paths_to_load.append(path.name)
-        input_files["scripts/data-enhancement/input.rdfox"] = StringIO(
+        input_files["scripts/data-validation/input.rdfox"] = StringIO(
             STANDARD_ENHANCEMENT_INPUT +
             "\n".join(f"import {name}" for name in paths_to_load)
         )
