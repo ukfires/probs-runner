@@ -177,9 +177,10 @@ def endpoint(obj, inputs, port, query_files, console):
 
 
 INSPECT_QUERY = """
-SELECT ?p ?o
+SELECT ?p ?o ?label
 WHERE {
     ?s ?p ?o .
+    OPTIONAL { ?o rdfs:label ?label }
 }
 ORDER BY ?p ?o
 """
@@ -192,6 +193,9 @@ WHERE {
 }
 """
 
+INSPECT_OBSERVATIONS_ID = """
+SELECT ?Observation WHERE { ?Observation a :Observation }
+"""
 
 INSPECT_OBSERVATIONS_SUMMARY = """
 SELECT ?p (COUNT(DISTINCT ?o) AS ?count) (GROUP_CONCAT(DISTINCT STR(?o)) AS ?values)
@@ -239,6 +243,11 @@ def _inspect(rdfox, subject):
     help="Print a summary of observations found in the data.",
     is_flag=True,
 )
+@click.option(
+    "--format",
+    help="Output format (Graphviz or plain text).",
+    type=click.Choice(['text', 'graphviz'], case_sensitive=False)
+)
 # @click.option(
 #     "-l",
 #     "--load",
@@ -246,7 +255,7 @@ def _inspect(rdfox, subject):
 #     multiple=True,
 # )
 @click.pass_obj
-def inspect(obj, inputs, subject, summary):
+def inspect(obj, inputs, subject, summary, format):
     "Load facts and inspect a PRObs subject."
     click.echo("Loading data...", err=True)
 
@@ -256,7 +265,7 @@ def inspect(obj, inputs, subject, summary):
                         port=12130,
                         script_source_dir=script_source_dir) as rdfox:
 
-        if summary:
+        if summary and format == "text":
             print()
             result = rdfox.query_records(INSPECT_OBSERVATIONS_COUNT)
             for row in result:
@@ -265,6 +274,13 @@ def inspect(obj, inputs, subject, summary):
             result = rdfox.query_records(INSPECT_OBSERVATIONS_SUMMARY, n3=True)
             for row in result:
                 print("{p:40s} {count:3d}".format(**row))
+
+        elif summary and format == "graphviz":
+            result = rdfox.query_records(INSPECT_OBSERVATIONS_ID)
+            print("digraph G {")
+            for row in result:
+                _inspect_observation_graphviz(rdfox, row["Observation"])
+            print("}")
 
         elif subject:
             for s in subject:
@@ -276,3 +292,99 @@ def inspect(obj, inputs, subject, summary):
                 if not subject:
                     break
                 _inspect(rdfox, subject)
+
+
+def _inspect_observation_graphviz(rdfox, subject):
+    result = rdfox.query_records(INSPECT_QUERY,
+                                 n3=True,
+                                 initBindings={"s": URIRef(subject)})
+
+    if not result:
+        return
+
+    if subject.startswith(PROBS):
+        subject = "probs:" + subject[len(PROBS):]
+    else:
+        subject = f"<{subject}>"
+
+    values = {}
+    labels = {}
+    for x in result:
+        values.setdefault(x["p"], set())
+        values[x["p"]] |= {x["o"]}
+        if x["label"] is not None:
+            labels[x["o"]] = x["label"]
+
+    # print("  # Labels")
+    # for k, v in labels.items():
+    #     print(f'  "{k}" [label="{v}"];')
+
+    label = []
+    value = ""
+    label_values = [
+        "probs:hasRegion",
+        "probs:hasTimePeriod",
+        "probs:hasRole",
+    ]
+    for p in label_values:
+        label.append(", ".join(values[p]))
+    if "probs:bound" in values:
+        vals = values["probs:bound"]
+        value = ("== " if "probs:ExactBound" in vals else "&gt;") + value
+    if "probs:measurement" in values:
+        vals = values["probs:measurement"]
+        value += str(list(vals)[0])
+
+
+    def _label(x):
+        if x in labels:
+            return labels[x]
+        else:
+            _, _, last_part = x.rpartition("/")
+            return last_part.rstrip(">")
+
+    extra_label = []
+    extra_label.append(", ".join(
+        [f"{_label(x)}" for x in values.get("probs:objectDirectlyDefinedBy", [])] +
+        [f"({_label(x)})" for x in values.get("probs:objectInferredDefinedBy", [])]
+    ))
+    extra_label.append(", ".join(
+        [f"{_label(x)}" for x in values.get("probs:processDirectlyDefinedBy", [])] +
+        [f"({_label(x)})" for x in values.get("probs:processInferredDefinedBy", [])]
+    ))
+
+    if subject.startswith("<http://ukfires.org/probs/data/"):
+        subject_label = subject[len("<http://ukfires.org/probs/data/"):].strip("<>")
+    else:
+        subject_label = subject.strip("<>")
+
+
+    label = (
+        '{' +
+        f'{subject_label[:50]} | ' +
+        '{' + " | ".join(label + [value]) + '} | ' +
+        '{' + " | ".join(extra_label) + '}' +
+        '}'
+    )
+    print(f'  "{subject}" [shape=record,label="{label}"];')
+
+    edge_values = [
+        "prov:wasDerivedFrom",
+        # "probs:objectDirectlyDefinedBy",
+        # "probs:objectInferredDefinedBy",
+        # "probs:processDirectlyDefinedBy",
+        # "probs:processInferredDefinedBy",
+    ]
+    for p in edge_values:
+        if p not in values:
+            continue
+        for v in values[p]:
+            if p == "prov:wasDerivedFrom":
+                # backwards meaning/flow
+                print(f'  "{v}" -> "{subject}" [dir=back, color=gray, label="{p}"]')
+            else:
+                if "Directly" in p:
+                    attrs = "penwidth=1.5, "
+                elif "Inferred" in p:
+                    attrs = "style=dashed, "
+                print(f'  "{subject}" -> "{v}" [{attrs}label="{p}"]')
