@@ -16,7 +16,6 @@ class Datasource:
     load_data_script: str = ""
     rules: str = ""
 
-
     @classmethod
     def from_facts(cls, facts):
         """Create a datasource from explicit list of facts."""
@@ -107,24 +106,17 @@ def load_datasource(path: Path):
 
     load_data_path = path / "load_data.rdfox"
     if load_data_path.exists():
-        load_data_script = load_data_path.read_text()
+        load_data_script = load_data_path
     else:
         load_data_script = ""
 
     map_path = path / "map.dlog"
     if map_path.exists():
-        rules = map_path.read_text()
+        rules = map_path
     else:
         rules = ""
 
     data_files = list(path.glob("*.csv")) + list(path.glob("*.ttl"))
-    datasource_name = path.stem
-    input_files = {
-        f"data/{datasource_name}/{filename.relative_to(path)}": filename
-        for filename in data_files
-    }
 
-    ds = Datasource(input_files, load_data_script, rules)
-    ds.id = datasource_name
-    return ds
-
+    datasource = Datasource.from_files(data_files, load_data_script, rules)
+    return datasource
