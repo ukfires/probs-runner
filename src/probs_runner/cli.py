@@ -93,7 +93,7 @@ def validate_data(obj, inputs):
 
 @cli.command()
 @click.argument("inputs", nargs=-1, type=click.Path(exists=True, path_type=pathlib.Path))
-@click.argument("output", nargs=1, type=click.Path(exists=True, path_type=pathlib.Path))
+@click.argument("output", nargs=1, type=click.Path(path_type=pathlib.Path))
 @click.pass_obj
 def enhance_data(obj, inputs, output):
     "Run enhancement scripts on PRObs RDF data."
