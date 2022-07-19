@@ -52,7 +52,6 @@ logger = logging.getLogger(__name__)
 
 
 NAMESPACES = {
-    "sys": Namespace("https://ukfires.org/probs/system/"),
     "": PROBS,
     "probs": PROBS,
     "rdf": RDF,
